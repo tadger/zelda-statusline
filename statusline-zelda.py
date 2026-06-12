@@ -38,6 +38,8 @@ MAX_BRANCH = 24      # branch-name cap; longer names are middle-truncated with �
 FULL = "\U000F02D1"   # nf full heart  (U+F02D1, Material Design)
 HALFG = "\U000F06DE"  # nf heart-half-full — a real half-filled heart (MDI family)
 EMPTY = "\U000F02D5"  # nf heart-outline — empty container (same MDI family)
+MODEL_ICON = "\U000F04E5"  # nf-md-sword (U+F04E5) — model prefix
+COST_ICON = "\uF219"       # nf-fa-gem (U+F219) — cost prefix
 
 
 def read_stdin():
@@ -174,10 +176,11 @@ def rainbow(text):
 
 
 def model_segment(name, effort):
-    """Model + effort. At max effort the whole thing gets the rainbow treatment."""
+    """Model + effort, prefixed with the model icon. Rainbow at max effort."""
+    label = f"{MODEL_ICON} {name}"
     if effort and effort.lower() == "max":
-        return rainbow(f"{name}·{effort}")        # recreate the max-effort shimmer
-    seg = f"{PURPLE}{name}{RESET}"
+        return rainbow(f"{label}·{effort}")       # recreate the max-effort shimmer
+    seg = f"{PURPLE}{label}{RESET}"
     if effort:
         seg += f"{DIM}·{RESET}{PINK}{effort}{RESET}"
     return seg
@@ -220,12 +223,13 @@ def term_cols(default=120):
 
 def layout(branch_seg, model_seg, ctx_seg):
     """One line when it fits the terminal; otherwise stack onto multiple rows."""
-    sep = f"  {DIM}│{RESET}  "
+    gap = "   "                       # branch ↔ model: plain whitespace
+    sep = f"  {DIM}│{RESET}  "         # model ↔ context: bar separator
     cols = term_cols()
-    one = f"{branch_seg}{sep}{model_seg}{sep}{ctx_seg}"
+    one = f"{branch_seg}{gap}{model_seg}{sep}{ctx_seg}"
     if vis_width(one) <= cols:
         return one
-    top = f"{branch_seg}{sep}{model_seg}"          # try branch+model / hearts split
+    top = f"{branch_seg}{gap}{model_seg}"          # try branch+model / hearts split
     if vis_width(top) <= cols and vis_width(ctx_seg) <= cols:
         return f"{top}\n{ctx_seg}"
     return f"{branch_seg}\n{model_seg}\n{ctx_seg}"  # very narrow: one row each
@@ -256,7 +260,7 @@ def main():
     # ── session cost in USD (follows the context segment) ──
     cost = (data.get("cost") or {}).get("total_cost_usd")
     if cost is not None:
-        ctx_seg += f"  {COST}${cost:.2f}{RESET}"
+        ctx_seg += f"  {COST}{COST_ICON} ${cost:.2f}{RESET}"
 
     print(layout(branch_seg, model_seg, ctx_seg))
 
@@ -267,7 +271,7 @@ def demo():
     print(f"  MAX  effort:  {model_segment('Opus 4.8', 'max')}   (rainbow shimmer)\n")
     for used in (5, 45, 65, 82, 95):
         seg = context_segment(1.0 - used / 100)
-        print(f"  {used:3}% used   {seg}  {COST}${used * 0.01:.2f}{RESET}")
+        print(f"  {used:3}% used   {seg}  {COST}{COST_ICON} ${used * 0.01:.2f}{RESET}")
     print("\n(percentage: dim → yellow ≤40% health → bold-red ≤20% health)")
 
 
