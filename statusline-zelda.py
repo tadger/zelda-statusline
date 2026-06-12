@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Zelda-style status line for Claude Code.
 
-Shows: git branch | model + effort | context as draining heart containers.
+Shows: git branch | model + effort | context as draining heart containers | cost.
 
-Claude Code pipes a JSON blob on stdin (model, workspace, transcript_path, ...).
+Claude Code pipes a JSON blob on stdin (model, workspace, transcript_path, cost…).
 Hearts = remaining context "health": you start full and lose hearts as the
 context fills. The number is context *used* %. Window auto-detects from the
 model id (1M for [1m] models, 200k otherwise).
+
+Optional config: ~/.config/zelda-statusline/config.json (or $ZELDA_STATUSLINE_CONFIG).
+See README for the schema — hearts count, segment visibility, and colors.
 """
 import json
 import os
@@ -18,26 +21,50 @@ import sys
 RESET = "\033[0m"
 DIM = "\033[2m"
 BOLD = "\033[1m"
-RED = "\033[91m"           # full/half heart (bright red — pink in this theme)
-GREY = "\033[90m"          # empty heart container
-CYAN = "\033[36m"          # branch
-PURPLE = "\033[38;5;141m"  # model (256-color purple)
-PINK = "\033[38;5;211m"    # effort (256-color pink)
-YELLOW = "\033[33m"        # caution percentage
-COST = "\033[38;5;42m"     # session cost in USD (green with a touch of blue)
-# Rainbow ramp for max-effort (bright 16-color hues — render anywhere, no 256 dep)
-RAINBOW = ["\033[91m", "\033[93m", "\033[92m", "\033[96m", "\033[94m", "\033[95m"]
 
-# Health thresholds (fraction of context remaining)
-LOW_HEALTH = 0.20     # danger zone — bold-red percentage
-CAUTION = 0.40        # caution zone — yellow percentage
 
-HEARTS = 10          # number of containers
-MAX_BRANCH = 24      # branch-name cap; longer names are middle-truncated with …
-# Nerd Font heart glyphs (require a patched Nerd Font in the terminal).
-FULL = "\U000F02D1"   # nf full heart  (U+F02D1, Material Design)
-HALFG = "\U000F06DE"  # nf heart-half-full — a real half-filled heart (MDI family)
-EMPTY = "\U000F02D5"  # nf heart-outline — empty container (same MDI family)
+def _esc(param):
+    """Build an SGR escape from a parameter string, e.g. '91' or '38;5;141'."""
+    return f"\033[{param}m"
+
+
+# Defaults — every one is overridable via the JSON config (see README).
+DEFAULT_COLORS = {
+    "red": "91",          # full/half heart (bright red)
+    "grey": "90",         # empty heart container
+    "branch": "36",       # git branch (cyan)
+    "model": "38;5;141",  # model name (purple)
+    "effort": "38;5;211",  # effort (pink)
+    "caution": "33",      # caution percentage (yellow)
+    "cost": "38;5;42",    # session cost (bluish green)
+}
+DEFAULT_RAINBOW = ["91", "93", "92", "96", "94", "95"]  # max-effort shimmer
+DEFAULT_SHOW = {
+    "branch": True, "model": True, "effort": True,
+    "hearts": True, "percent": True, "cost": True,
+}
+
+# Live globals — seeded with defaults, replaced by configure() at runtime.
+RED = _esc(DEFAULT_COLORS["red"])
+GREY = _esc(DEFAULT_COLORS["grey"])
+CYAN = _esc(DEFAULT_COLORS["branch"])
+PURPLE = _esc(DEFAULT_COLORS["model"])
+PINK = _esc(DEFAULT_COLORS["effort"])
+YELLOW = _esc(DEFAULT_COLORS["caution"])
+COST = _esc(DEFAULT_COLORS["cost"])
+RAINBOW = [_esc(p) for p in DEFAULT_RAINBOW]
+SHOW = dict(DEFAULT_SHOW)
+HEARTS = 10          # number of heart containers (config: "hearts")
+
+# Source-only tunables (not part of the JSON config)
+LOW_HEALTH = 0.20    # danger zone — bold-red percentage
+CAUTION = 0.40       # caution zone — yellow percentage
+MAX_BRANCH = 24      # branch-name cap; longer names middle-truncated with …
+
+# Nerd Font glyphs (require a patched Nerd Font in the terminal)
+FULL = "\U000F02D1"        # nf heart (U+F02D1)
+HALFG = "\U000F06DE"       # nf heart-half-full (U+F06DE)
+EMPTY = "\U000F02D5"       # nf heart-outline (U+F02D5)
 MODEL_ICON = "\U000F04E5"  # nf-md-sword (U+F04E5) — model prefix
 COST_ICON = "\uF219"       # nf-fa-gem (U+F219) — cost prefix
 
@@ -47,6 +74,44 @@ def read_stdin():
         return json.load(sys.stdin)
     except Exception:
         return {}
+
+
+def read_json(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def configure():
+    """Load the optional JSON config and override colors / hearts / visibility."""
+    global RED, GREY, CYAN, PURPLE, PINK, YELLOW, COST, RAINBOW, HEARTS, SHOW
+    path = (os.environ.get("ZELDA_STATUSLINE_CONFIG")
+            or os.path.expanduser("~/.config/zelda-statusline/config.json"))
+    cfg = read_json(path)
+    if not cfg:
+        return
+
+    colors = cfg.get("colors") or {}
+    RED = _esc(colors.get("red", DEFAULT_COLORS["red"]))
+    GREY = _esc(colors.get("grey", DEFAULT_COLORS["grey"]))
+    CYAN = _esc(colors.get("branch", DEFAULT_COLORS["branch"]))
+    PURPLE = _esc(colors.get("model", DEFAULT_COLORS["model"]))
+    PINK = _esc(colors.get("effort", DEFAULT_COLORS["effort"]))
+    YELLOW = _esc(colors.get("caution", DEFAULT_COLORS["caution"]))
+    COST = _esc(colors.get("cost", DEFAULT_COLORS["cost"]))
+
+    if cfg.get("rainbow"):
+        RAINBOW = [_esc(p) for p in cfg["rainbow"]]
+
+    if "hearts" in cfg:
+        try:
+            HEARTS = max(1, int(cfg["hearts"]))
+        except (ValueError, TypeError):
+            pass
+
+    SHOW = {**DEFAULT_SHOW, **(cfg.get("show") or {})}
 
 
 def git_branch(cwd):
@@ -67,14 +132,6 @@ def git_branch(cwd):
         return branch or None
     except Exception:
         return None
-
-
-def read_json(path):
-    try:
-        with open(path) as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
 
 
 def effort_level(cwd):
@@ -150,17 +207,20 @@ def heart_bar(remaining_frac):
     return " ".join(cells)
 
 
-def context_segment(remaining_frac):
-    """Heart bar + percentage; the percentage color escalates as context fills."""
-    pct_used = round((1.0 - remaining_frac) * 100)
-    bar = heart_bar(remaining_frac)
-    if remaining_frac <= LOW_HEALTH:            # danger — context nearly full
-        pct = f"{BOLD}{RED}{pct_used}%{RESET}"
-    elif remaining_frac <= CAUTION:             # caution
-        pct = f"{YELLOW}{pct_used}%{RESET}"
-    else:                                       # healthy
-        pct = f"{DIM}{pct_used}%{RESET}"
-    return f"{bar} {pct}"
+def context_segment(remaining_frac, show_hearts=True, show_percent=True):
+    """Heart bar and/or percentage; the percentage color escalates with usage."""
+    parts = []
+    if show_hearts:
+        parts.append(heart_bar(remaining_frac))
+    if show_percent:
+        pct_used = round((1.0 - remaining_frac) * 100)
+        if remaining_frac <= LOW_HEALTH:        # danger — context nearly full
+            parts.append(f"{BOLD}{RED}{pct_used}%{RESET}")
+        elif remaining_frac <= CAUTION:         # caution
+            parts.append(f"{YELLOW}{pct_used}%{RESET}")
+        else:                                   # healthy
+            parts.append(f"{DIM}{pct_used}%{RESET}")
+    return " ".join(parts)
 
 
 def rainbow(text):
@@ -222,52 +282,70 @@ def term_cols(default=120):
 
 
 def layout(branch_seg, model_seg, ctx_seg):
-    """One line when it fits the terminal; otherwise stack onto multiple rows."""
+    """One line when it fits the terminal; otherwise stack onto multiple rows.
+
+    Any segment may be None (hidden). Branch↔model join with whitespace; the
+    branch/model group joins the context with a bar separator.
+    """
     gap = "   "                       # branch ↔ model: plain whitespace
-    sep = f"  {DIM}│{RESET}  "         # model ↔ context: bar separator
+    sep = f"  {DIM}│{RESET}  "         # header ↔ context: bar separator
     cols = term_cols()
-    one = f"{branch_seg}{gap}{model_seg}{sep}{ctx_seg}"
+
+    header_bits = [b for b in (branch_seg, model_seg) if b]
+    header = gap.join(header_bits)
+    one = sep.join(p for p in (header, ctx_seg) if p)
     if vis_width(one) <= cols:
         return one
-    top = f"{branch_seg}{gap}{model_seg}"          # try branch+model / hearts split
-    if vis_width(top) <= cols and vis_width(ctx_seg) <= cols:
-        return f"{top}\n{ctx_seg}"
-    return f"{branch_seg}\n{model_seg}\n{ctx_seg}"  # very narrow: one row each
+
+    lines = []
+    if header:
+        lines.append(header if vis_width(header) <= cols else "\n".join(header_bits))
+    if ctx_seg:
+        lines.append(ctx_seg)
+    return "\n".join(lines)
 
 
 def main():
+    configure()
     data = read_stdin()
     cwd = data.get("cwd") or data.get("workspace", {}).get("current_dir") or os.getcwd()
+    model = data.get("model", {})
 
     # ── branch ──
-    branch = git_branch(cwd)
-    if branch:
-        branch = truncate_middle(branch, MAX_BRANCH)
-    branch_seg = f"{CYAN}⎇ {branch}{RESET}" if branch else f"{GREY}⎇ no-git{RESET}"
+    branch_seg = None
+    if SHOW["branch"]:
+        branch = git_branch(cwd)
+        if branch:
+            branch = truncate_middle(branch, MAX_BRANCH)
+        branch_seg = (f"{CYAN}⎇ {branch}{RESET}" if branch
+                      else f"{GREY}⎇ no-git{RESET}")
 
     # ── model + effort ──
-    model = data.get("model", {})
-    name = model.get("display_name") or model.get("id") or "model"
-    effort = effort_level(cwd)
-    model_seg = model_segment(name, effort)
+    model_seg = None
+    if SHOW["model"]:
+        name = model.get("display_name") or model.get("id") or "model"
+        effort = effort_level(cwd) if SHOW["effort"] else None
+        model_seg = model_segment(name, effort)
 
-    # ── context hearts ──
+    # ── context: hearts / percent / cost ──
     used = context_tokens(data.get("transcript_path"))
     window = window_size(model.get("id"))
     used_frac = min(1.0, used / window) if window else 0.0
-    ctx_seg = context_segment(1.0 - used_frac)
-
-    # ── session cost in USD (follows the context segment) ──
-    cost = (data.get("cost") or {}).get("total_cost_usd")
-    if cost is not None:
-        ctx_seg += f"  {COST}{COST_ICON} ${cost:.2f}{RESET}"
+    ctx_seg = context_segment(1.0 - used_frac, SHOW["hearts"], SHOW["percent"])
+    if SHOW["cost"]:
+        cost = (data.get("cost") or {}).get("total_cost_usd")
+        if cost is not None:
+            piece = f"{COST}{COST_ICON} ${cost:.2f}{RESET}"
+            ctx_seg = f"{ctx_seg}  {piece}" if ctx_seg else piece
+    ctx_seg = ctx_seg or None
 
     print(layout(branch_seg, model_seg, ctx_seg))
 
 
 def demo():
+    configure()
     print("Zelda status line — color & health preview:\n")
-    print(f"  high effort:  {model_segment('Opus 4.8', 'high')}   (purple model, pink effort)")
+    print(f"  high effort:  {model_segment('Opus 4.8', 'high')}   (model + effort)")
     print(f"  MAX  effort:  {model_segment('Opus 4.8', 'max')}   (rainbow shimmer)\n")
     for used in (5, 45, 65, 82, 95):
         seg = context_segment(1.0 - used / 100)

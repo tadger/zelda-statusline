@@ -67,17 +67,52 @@ python3 statusline-zelda.py --demo
 
 ## Configuration
 
-All knobs live at the top of `statusline-zelda.py`:
+Drop an optional JSON file at **`~/.config/zelda-statusline/config.json`**
+(or point `$ZELDA_STATUSLINE_CONFIG` at another path). Every key is optional;
+anything you omit keeps its default. A malformed file is ignored.
 
-| Constant | Purpose |
-|---|---|
-| `RED`, `GREY`, `PURPLE`, `PINK`, `YELLOW`, `COST`, `RAINBOW` | colors |
-| `LOW_HEALTH` / `CAUTION` | percentage warning thresholds (fraction *remaining*) |
-| `HEARTS` | number of containers |
-| `MAX_BRANCH` | branch-name length cap before middle-truncation |
-| `FULL` / `HALFG` / `EMPTY` | the three Nerd Font heart glyphs |
+```json
+{
+  "hearts": 10,
+  "show": {
+    "branch": true,
+    "model": true,
+    "effort": true,
+    "hearts": true,
+    "percent": true,
+    "cost": true
+  },
+  "colors": {
+    "red": "91",
+    "grey": "90",
+    "branch": "36",
+    "model": "38;5;141",
+    "effort": "38;5;211",
+    "caution": "33",
+    "cost": "38;5;42"
+  },
+  "rainbow": ["91", "93", "92", "96", "94", "95"]
+}
+```
 
-### Finding heart glyphs for your font
+- **`hearts`** — number of heart containers.
+- **`show`** — toggle any segment on/off: `branch`, `model`, `effort`,
+  `hearts` (the bar), `percent`, `cost`.
+- **`colors`** / **`rainbow`** — each value is an **ANSI SGR parameter string**,
+  wrapped by the script as `\033[<value>m`. So:
+  - `"91"` — 16-color bright red
+  - `"38;5;141"` — 256-color
+  - `"38;2;255;128;0"` — 24-bit truecolor (note: broken in some Claude Code
+    versions; 256-color is the safe choice)
+  - `"1;91"` — bold + bright red
+  The values above are the built-in defaults.
+
+A few knobs are deliberately **source-only** (edit the constants near the top of
+`statusline-zelda.py`): `LOW_HEALTH`/`CAUTION` (percentage warning thresholds),
+`MAX_BRANCH` (truncation cap), and the glyphs `FULL`/`HALFG`/`EMPTY`/`MODEL_ICON`/
+`COST_ICON`.
+
+### Finding heart (and other) glyphs for your font
 
 Nerd Fonts remap icons to font-specific codepoints, so the "right" heart
 codepoint varies by font/version. Read your actual font's cmap by glyph name:
