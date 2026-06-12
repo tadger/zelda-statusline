@@ -46,6 +46,8 @@ DEFAULT_SHOW = {
 DEFAULT_ORDER = ["branch", "model", "hearts", "percent", "cost"]
 DEFAULT_SEPARATOR = "  "   # literal string placed between adjacent items
 KNOWN_ITEMS = ("branch", "model", "hearts", "percent", "cost")
+_BREAK = object()                          # sentinel: force a line break
+ORDER_TOKENS = KNOWN_ITEMS + ("newline",)  # valid entries in "order"
 
 # Live globals — seeded with defaults, replaced by configure() at runtime.
 RED = _esc(DEFAULT_COLORS["red"])
@@ -124,7 +126,7 @@ def configure():
 
     order = cfg.get("order")
     if isinstance(order, list):
-        filtered = [k for k in order if k in KNOWN_ITEMS]
+        filtered = [k for k in order if k in ORDER_TOKENS]
         if filtered:
             ORDER = filtered
 
@@ -301,22 +303,28 @@ def term_cols(default=120):
 
 
 def layout(segments):
-    """Join SEPARATOR-delimited segments, packing onto as few rows as fit $COLUMNS.
+    """Join SEPARATOR-delimited segments into rows.
 
-    Greedy left-to-right: keep adding to the current row while it fits, else wrap.
-    A segment wider than the terminal lands on its own row (unavoidable overflow).
+    A _BREAK sentinel forces a new row. Otherwise segments pack greedily
+    left-to-right, wrapping when the current row would exceed $COLUMNS. A
+    segment wider than the terminal lands on its own row (unavoidable overflow).
     """
     cols = term_cols()
     sep_w = vis_width(SEPARATOR)
     lines, cur, cur_w = [], "", 0
     for seg in segments:
+        if seg is _BREAK:                 # explicit line break
+            if cur:
+                lines.append(cur)
+            cur, cur_w = "", 0
+            continue
         sw = vis_width(seg)
         if not cur:
             cur, cur_w = seg, sw
-        elif cur_w + sep_w + sw <= cols:
+        elif cur_w + sep_w + sw <= cols:  # fits on the current row
             cur += SEPARATOR + seg
             cur_w += sep_w + sw
-        else:
+        else:                             # too wide — wrap
             lines.append(cur)
             cur, cur_w = seg, sw
     if cur:
@@ -355,8 +363,13 @@ def main():
         if cost is not None:
             pieces["cost"] = f"{COST}{COST_ICON} ${cost:.2f}{RESET}"
 
-    # Emit in the configured order, skipping hidden/empty items.
-    segments = [pieces[k] for k in ORDER if pieces.get(k)]
+    # Emit in the configured order; "newline" forces a row break.
+    segments = []
+    for k in ORDER:
+        if k == "newline":
+            segments.append(_BREAK)
+        elif pieces.get(k):
+            segments.append(pieces[k])
     print(layout(segments))
 
 

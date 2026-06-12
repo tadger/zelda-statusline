@@ -101,7 +101,11 @@ anything you omit keeps its default. A malformed file is ignored.
 - **`order`** — sequence of items left-to-right. Valid items: `branch`,
   `model`, `hearts`, `percent`, `cost`. Items omitted from the list aren't
   shown; unknown names are ignored. (An item also needs `show` not set to
-  `false`.)
+  `false`.) Insert **`"newline"`** to force a row break — e.g.
+  `["branch", "model", "newline", "hearts", "percent", "cost"]` puts
+  branch+model on the first row and the metrics on the second. Leading,
+  trailing, and repeated `"newline"`s collapse (no blank rows). Even without
+  it, the line wraps automatically when it's wider than the terminal.
 - **`separator`** — literal string placed between adjacent items, e.g. `"  "`
   (default), `" │ "`, or `" · "`. Used uniformly, so it also appears between
   hearts and the percentage. On narrow terminals the line greedily wraps onto
