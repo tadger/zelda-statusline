@@ -151,8 +151,13 @@ def git_branch(cwd):
         return None
 
 
-def effort_level(cwd):
-    """Last writer wins: user settings -> project -> project local."""
+def effort_level(cwd, data):
+    """Live effort from the status line's stdin (reflects per-session /effort
+    overrides), falling back to the persisted effortLevel in settings.json."""
+    live = (data.get("effort") or {}).get("level")
+    if live:
+        return live
+    # Fallback (no live effort in stdin): user -> project -> local (last wins).
     level = None
     candidates = [
         os.path.expanduser("~/.claude/settings.json"),
@@ -352,7 +357,7 @@ def main():
                             else f"{GREY}⎇ no-git{RESET}")
     if SHOW["model"]:
         name = model.get("display_name") or model.get("id") or "model"
-        effort = effort_level(cwd) if SHOW["effort"] else None
+        effort = effort_level(cwd, data) if SHOW["effort"] else None
         pieces["model"] = model_segment(name, effort)
     if SHOW["hearts"]:
         pieces["hearts"] = heart_bar(remaining)
