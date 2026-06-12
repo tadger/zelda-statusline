@@ -1,5 +1,7 @@
 {
   "hearts": 10,
+  "order": ["branch", "model", "hearts", "percent", "cost"],
+  "separator": "  ",
   "show": {
     "branch": true,
     "model": true,

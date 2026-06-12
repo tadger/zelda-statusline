@@ -74,6 +74,8 @@ anything you omit keeps its default. A malformed file is ignored.
 ```json
 {
   "hearts": 10,
+  "order": ["branch", "model", "hearts", "percent", "cost"],
+  "separator": "  ",
   "show": {
     "branch": true,
     "model": true,
@@ -96,6 +98,14 @@ anything you omit keeps its default. A malformed file is ignored.
 ```
 
 - **`hearts`** — number of heart containers.
+- **`order`** — sequence of items left-to-right. Valid items: `branch`,
+  `model`, `hearts`, `percent`, `cost`. Items omitted from the list aren't
+  shown; unknown names are ignored. (An item also needs `show` not set to
+  `false`.)
+- **`separator`** — literal string placed between adjacent items, e.g. `"  "`
+  (default), `" │ "`, or `" · "`. Used uniformly, so it also appears between
+  hearts and the percentage. On narrow terminals the line greedily wraps onto
+  multiple rows.
 - **`show`** — toggle any segment on/off: `branch`, `model`, `effort`,
   `hearts` (the bar), `percent`, `cost`.
 - **`colors`** / **`rainbow`** — each value is an **ANSI SGR parameter string**,

@@ -43,6 +43,9 @@ DEFAULT_SHOW = {
     "branch": True, "model": True, "effort": True,
     "hearts": True, "percent": True, "cost": True,
 }
+DEFAULT_ORDER = ["branch", "model", "hearts", "percent", "cost"]
+DEFAULT_SEPARATOR = "  "   # literal string placed between adjacent items
+KNOWN_ITEMS = ("branch", "model", "hearts", "percent", "cost")
 
 # Live globals — seeded with defaults, replaced by configure() at runtime.
 RED = _esc(DEFAULT_COLORS["red"])
@@ -54,6 +57,8 @@ YELLOW = _esc(DEFAULT_COLORS["caution"])
 COST = _esc(DEFAULT_COLORS["cost"])
 RAINBOW = [_esc(p) for p in DEFAULT_RAINBOW]
 SHOW = dict(DEFAULT_SHOW)
+ORDER = list(DEFAULT_ORDER)
+SEPARATOR = DEFAULT_SEPARATOR
 HEARTS = 10          # number of heart containers (config: "hearts")
 
 # Source-only tunables (not part of the JSON config)
@@ -87,6 +92,7 @@ def read_json(path):
 def configure():
     """Load the optional JSON config and override colors / hearts / visibility."""
     global RED, GREY, CYAN, PURPLE, PINK, YELLOW, COST, RAINBOW, HEARTS, SHOW
+    global ORDER, SEPARATOR
     path = (os.environ.get("ZELDA_STATUSLINE_CONFIG")
             or os.path.expanduser("~/.config/zelda-statusline/config.json"))
     cfg = read_json(path)
@@ -112,6 +118,15 @@ def configure():
             pass
 
     SHOW = {**DEFAULT_SHOW, **(cfg.get("show") or {})}
+
+    if isinstance(cfg.get("separator"), str):
+        SEPARATOR = cfg["separator"]
+
+    order = cfg.get("order")
+    if isinstance(order, list):
+        filtered = [k for k in order if k in KNOWN_ITEMS]
+        if filtered:
+            ORDER = filtered
 
 
 def git_branch(cwd):
@@ -207,19 +222,23 @@ def heart_bar(remaining_frac):
     return " ".join(cells)
 
 
+def percent_segment(remaining_frac):
+    """Context-used percentage; color escalates as the context fills."""
+    pct_used = round((1.0 - remaining_frac) * 100)
+    if remaining_frac <= LOW_HEALTH:        # danger — context nearly full
+        return f"{BOLD}{RED}{pct_used}%{RESET}"
+    if remaining_frac <= CAUTION:           # caution
+        return f"{YELLOW}{pct_used}%{RESET}"
+    return f"{DIM}{pct_used}%{RESET}"       # healthy
+
+
 def context_segment(remaining_frac, show_hearts=True, show_percent=True):
-    """Heart bar and/or percentage; the percentage color escalates with usage."""
+    """Hearts and/or percentage joined by a space (used by --demo)."""
     parts = []
     if show_hearts:
         parts.append(heart_bar(remaining_frac))
     if show_percent:
-        pct_used = round((1.0 - remaining_frac) * 100)
-        if remaining_frac <= LOW_HEALTH:        # danger — context nearly full
-            parts.append(f"{BOLD}{RED}{pct_used}%{RESET}")
-        elif remaining_frac <= CAUTION:         # caution
-            parts.append(f"{YELLOW}{pct_used}%{RESET}")
-        else:                                   # healthy
-            parts.append(f"{DIM}{pct_used}%{RESET}")
+        parts.append(percent_segment(remaining_frac))
     return " ".join(parts)
 
 
@@ -281,27 +300,27 @@ def term_cols(default=120):
         return default
 
 
-def layout(branch_seg, model_seg, ctx_seg):
-    """One line when it fits the terminal; otherwise stack onto multiple rows.
+def layout(segments):
+    """Join SEPARATOR-delimited segments, packing onto as few rows as fit $COLUMNS.
 
-    Any segment may be None (hidden). Branch↔model join with whitespace; the
-    branch/model group joins the context with a bar separator.
+    Greedy left-to-right: keep adding to the current row while it fits, else wrap.
+    A segment wider than the terminal lands on its own row (unavoidable overflow).
     """
-    gap = "   "                       # branch ↔ model: plain whitespace
-    sep = f"  {DIM}│{RESET}  "         # header ↔ context: bar separator
     cols = term_cols()
-
-    header_bits = [b for b in (branch_seg, model_seg) if b]
-    header = gap.join(header_bits)
-    one = sep.join(p for p in (header, ctx_seg) if p)
-    if vis_width(one) <= cols:
-        return one
-
-    lines = []
-    if header:
-        lines.append(header if vis_width(header) <= cols else "\n".join(header_bits))
-    if ctx_seg:
-        lines.append(ctx_seg)
+    sep_w = vis_width(SEPARATOR)
+    lines, cur, cur_w = [], "", 0
+    for seg in segments:
+        sw = vis_width(seg)
+        if not cur:
+            cur, cur_w = seg, sw
+        elif cur_w + sep_w + sw <= cols:
+            cur += SEPARATOR + seg
+            cur_w += sep_w + sw
+        else:
+            lines.append(cur)
+            cur, cur_w = seg, sw
+    if cur:
+        lines.append(cur)
     return "\n".join(lines)
 
 
@@ -311,35 +330,34 @@ def main():
     cwd = data.get("cwd") or data.get("workspace", {}).get("current_dir") or os.getcwd()
     model = data.get("model", {})
 
-    # ── branch ──
-    branch_seg = None
+    used = context_tokens(data.get("transcript_path"))
+    window = window_size(model.get("id"))
+    remaining = 1.0 - (min(1.0, used / window) if window else 0.0)
+
+    # Render each item; collect into a dict keyed by item name.
+    pieces = {}
     if SHOW["branch"]:
         branch = git_branch(cwd)
         if branch:
             branch = truncate_middle(branch, MAX_BRANCH)
-        branch_seg = (f"{CYAN}⎇ {branch}{RESET}" if branch
-                      else f"{GREY}⎇ no-git{RESET}")
-
-    # ── model + effort ──
-    model_seg = None
+        pieces["branch"] = (f"{CYAN}⎇ {branch}{RESET}" if branch
+                            else f"{GREY}⎇ no-git{RESET}")
     if SHOW["model"]:
         name = model.get("display_name") or model.get("id") or "model"
         effort = effort_level(cwd) if SHOW["effort"] else None
-        model_seg = model_segment(name, effort)
-
-    # ── context: hearts / percent / cost ──
-    used = context_tokens(data.get("transcript_path"))
-    window = window_size(model.get("id"))
-    used_frac = min(1.0, used / window) if window else 0.0
-    ctx_seg = context_segment(1.0 - used_frac, SHOW["hearts"], SHOW["percent"])
+        pieces["model"] = model_segment(name, effort)
+    if SHOW["hearts"]:
+        pieces["hearts"] = heart_bar(remaining)
+    if SHOW["percent"]:
+        pieces["percent"] = percent_segment(remaining)
     if SHOW["cost"]:
         cost = (data.get("cost") or {}).get("total_cost_usd")
         if cost is not None:
-            piece = f"{COST}{COST_ICON} ${cost:.2f}{RESET}"
-            ctx_seg = f"{ctx_seg}  {piece}" if ctx_seg else piece
-    ctx_seg = ctx_seg or None
+            pieces["cost"] = f"{COST}{COST_ICON} ${cost:.2f}{RESET}"
 
-    print(layout(branch_seg, model_seg, ctx_seg))
+    # Emit in the configured order, skipping hidden/empty items.
+    segments = [pieces[k] for k in ORDER if pieces.get(k)]
+    print(layout(segments))
 
 
 def demo():
